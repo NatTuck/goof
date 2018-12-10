@@ -25,6 +25,10 @@ defmodule Goof do
     raise "NIF didn't happen for init()"
   end
 
+  def tick() do
+    raise "NIF didn't happen for tick()"
+  end
+
   def cleanup() do
     raise "NIF didn't happen for terminate()"
   end
