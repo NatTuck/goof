@@ -25,8 +25,8 @@ defmodule Goof do
     raise "NIF didn't happen for init()"
   end
 
-  def tick() do
-    raise "NIF didn't happen for tick()"
+  def set_points(_points) do
+    raise "NIF didn't happen for set_points(...)"
   end
 
   def cleanup() do

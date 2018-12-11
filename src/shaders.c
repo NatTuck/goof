@@ -60,7 +60,7 @@ compile_shader(int type, const char* path)
         char* text = alloca(size);
 
         glGetShaderInfoLog(shader, size, 0, text);
-        printf("Shader compile errors for [%s]\n%s\n", path, text);
+        printf("Shader compile errors for [%s]\r\n%s\r\n", path, text);
         assert(0);
     }
 
@@ -89,7 +89,7 @@ compile_shader_program(const char* vsrc, const char* fsrc)
         char* text = alloca(size);
 
         glGetProgramInfoLog(sp, size, 0, text);
-        printf("Shader program link errors:\n%s\n", text);
+        printf("Shader program link errors:\r\n%s\r\n", text);
         assert(0);
     }
 

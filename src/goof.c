@@ -6,15 +6,9 @@
 #include <assert.h>
 
 #include <erl_nif.h>
-
 #include <GLFW/glfw3.h>
-#include <GLES3/gl31.h>
 
-#include "shaders.h"
-
-typedef struct goof_state {
-    GLFWwindow* window;
-} goof_state;
+#include "view.h"
 
 static
 ERL_NIF_TERM
@@ -33,25 +27,6 @@ make_error_text(ErlNifEnv* env, const char* emsg)
     return enif_make_tuple(env, 2, err, msg);
 }
 
-static GLFWwindow* window;
-unsigned int spgs[4];
-unsigned int vaos[4];
-unsigned int vbos[4];
-
-void
-on_glfw_error(int error, const char* description)
-{
-    puts("glfw error\r\n");
-    puts(description);
-}
-
-void
-on_framebuffer_resize(GLFWwindow* _window, int width, int height)
-{
-    printf("Resize: %d %d\n", width, height);
-    glViewport(0, 0, width, height);
-}
-
 static
 ERL_NIF_TERM
 goof_init(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
@@ -61,50 +36,7 @@ goof_init(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     static int done = 0;
     int rv = 1;
     if (!done) {
-        rv = glfwInit();
-        glfwSetErrorCallback(on_glfw_error);
-
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-
-        window = glfwCreateWindow(800, 600, "gltest window", NULL, NULL);
-        if (!window)
-        {
-            glfwTerminate();
-            return make_error_text(env, "create window failed");
-        }
-
-        glfwMakeContextCurrent(window);
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        glfwSwapInterval(1);
-        glfwSetFramebufferSizeCallback(window, on_framebuffer_resize);
-        glViewport(0, 0, 800, 600);
-
-        spgs[0] = compile_shader_program(
-            "src/glsl/vertex.glsl",
-            "src/glsl/fragment.glsl");
-
-        glGenVertexArrays(4, vaos);
-        glBindVertexArray(vaos[0]);
-
-        static float points[] = {
-            0.3f, 0.3f, 1.0f, 0.5f, 0.5f, 1.0f,
-            0.5f, 0.5f, 1.0f, 1.0f, 1.0f, 1.0f,
-            0.7f, 0.7f, 1.0f, 0.5f, 1.0f, 1.0f,
-        };
-
-        glGenBuffers(4, vbos);
-        glBindBuffer(GL_ARRAY_BUFFER, vbos[0]);
-        glBufferData(GL_ARRAY_BUFFER, 18 * sizeof(float), points, GL_DYNAMIC_DRAW);
-
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)8);
-        glEnableVertexAttribArray(1);
+        rv = view_init();
     }
     if (rv) {
         return enif_make_atom(env, "ok");
@@ -115,18 +47,91 @@ goof_init(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 }
 
 static
-ERL_NIF_TERM
-goof_tick(ErlNifEnv * env, int argc, const ERL_NIF_TERM argv[])
+int
+unpack_point(ErlNifEnv* env, ERL_NIF_TERM pt, float* pt_data)
 {
-    glClear(GL_COLOR_BUFFER_BIT);
+    int rv;
+    int nn;
+    double tmp;
 
-    glUseProgram(spgs[0]);
-    glBindVertexArray(vaos[0]);
-    glDrawArrays(GL_POINTS, 0, 3);
+    const ERL_NIF_TERM* pt_tup;
+    const ERL_NIF_TERM* pt_posn;
+    const ERL_NIF_TERM* pt_color;
 
-    glfwSwapBuffers(window);
+    rv = enif_get_tuple(env, pt, &nn, &pt_tup);
+    if (!rv || nn != 2) {
+        return 0;
+    }
 
-    glfwPollEvents();
+    rv = enif_get_tuple(env, pt_tup[0], &nn, &pt_posn);
+    if (!rv || nn != 2) {
+        return 0;
+    }
+
+    for (int ii = 0; ii < 2; ++ii) {
+        rv = enif_get_double(env, pt_posn[ii], &tmp);
+        if (!rv) {
+            return 0;
+        }
+        printf("pos[%d] = %.02f\r\n", ii, tmp);
+        pt_data[ii] = (float)tmp;
+    }
+
+    rv = enif_get_tuple(env, pt_tup[1], &nn, &pt_color);
+    if (!rv || nn != 4) {
+        return 0;
+    }
+
+    for (int ii = 0; ii < 4; ++ii) {
+        rv = enif_get_double(env, pt_color[ii], &tmp);
+        if (!rv) {
+            return 0;
+        }
+        printf("color[%d] = %.02f\r\n", ii, tmp);
+        pt_data[2 + ii] = (float)tmp;
+    }
+
+    return 1;
+}
+
+static
+ERL_NIF_TERM
+goof_set_points(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    assert(argc == 1);
+    ERL_NIF_TERM xs = argv[0];
+
+    int len;
+    int rv = enif_get_list_length(env, xs, &len);
+    if (!rv) {
+        return enif_make_atom(env, "error");
+    }
+
+    printf("got list of %d points.\r\n", len);
+
+    float* data = malloc(len * 6 * sizeof(float));
+
+    ERL_NIF_TERM head;
+    for (int ii = 0; ii < len; ++ii) {
+        rv = enif_get_list_cell(env, xs, &head, &xs);
+        if (!rv) {
+            free(data);
+            return enif_make_atom(env, "error");
+        }
+
+        rv = unpack_point(env, head, data + (6 * ii));
+        if (!rv) {
+            free(data);
+            return enif_make_atom(env, "error");
+        }
+    }
+
+    printf("data:\r\n");
+    for (int ii = 0; ii < (len * 6); ++ii) {
+        printf("%.02f\r\n", data[ii]);
+    }
+
+    view_set_points(data, len);
 
     return enif_make_atom(env, "ok");
 }
@@ -136,9 +141,12 @@ ERL_NIF_TERM
 goof_cleanup(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
     assert(argc == 0);
-
-    glfwTerminate();
-    return enif_make_atom(env, "ok");
+    if (view_stop()) {
+        return enif_make_atom(env, "ok");
+    }
+    else {
+        return enif_make_atom(env, "error");
+    }
 }
 
 static
@@ -168,7 +176,7 @@ static ErlNifFunc funcs[] =
 {
     {"init", 0, goof_init, 0},
     {"cleanup", 0, goof_cleanup, 0},
-    {"tick", 0, goof_tick, 0},
+    {"set_points", 1, goof_set_points, 0},
     {"glfw_version", 0, goof_glfw_version, 0},
 };
 
